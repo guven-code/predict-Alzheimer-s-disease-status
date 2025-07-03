@@ -1,1 +1,1 @@
-# predict-Alzheimer-s-disease-status
+# prediction of Alzheimer's Disease Status
