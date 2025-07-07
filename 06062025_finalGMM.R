@@ -569,58 +569,40 @@ valid <- data.frame(validation1, CATs = validationData_pheno)  # Add CATs to the
 testSET2<-data.frame(testSET2,CATs=SET2_pheno$pTAU.ABETA)
 
 #########(i)- 10 fold repeated-CV 
+
 set.seed(123)
-n_repeats <- 100
+folds <- createFolds(train$CATs, k = 10)
 
 cv_results <- data.frame(
-  Dataset = character(),
-  Iteration = numeric(),
+  Fold = numeric(),
   R2 = numeric(),
   RMSE = numeric(),
   stringsAsFactors = FALSE
 )
 
-for (i in 1:n_repeats) {
-  # Random 80/20 split of the training set for internal train/validation
-  train_idx <- createDataPartition(train$CATs, p = 0.8, list = FALSE)
-  train_cv <- train[train_idx, ]
-  valid_cv <- train[-train_idx, ]
+for (i in 1:10) {
+  # Get training and validation indices
+  valid_idx <- folds[[i]]
+  train_cv <- train[-valid_idx, ]
+  valid_cv <- train[valid_idx, ]
   
-  # Fit GMM on internal training set
+  # Fit GMM on training fold
   gmm_model <- Mclust(train_cv$CATs, G = 5)
   component_means <- gmm_model$parameters$mean
   
-  # Predict on Train set
-  pred_train <- predict(gmm_model, newdata = train$CATs)$z %*% component_means
-  cv_results <- rbind(cv_results, data.frame(
-    Dataset = "Train",
-    Iteration = i,
-    R2 = caret::R2(pred_train, train$CATs),
-    RMSE = RMSE(pred_train, train$CATs)
-  ))
-  
-  # Predict on Validation
+  # Predict on validation fold
   pred_valid <- predict(gmm_model, newdata = valid_cv$CATs)$z %*% component_means
+  
+  # Save R2 and RMSE for validation
   cv_results <- rbind(cv_results, data.frame(
-    Dataset = "Validation",
-    Iteration = i,
+    Fold = i,
     R2 = caret::R2(pred_valid, valid_cv$CATs),
     RMSE = RMSE(pred_valid, valid_cv$CATs)
   ))
-  
-  # Predict on external test SET2
-  pred_test <- predict(gmm_model, newdata = testSET2$CATs)$z %*% component_means
-  cv_results <- rbind(cv_results, data.frame(
-    Dataset = "SET2",
-    Iteration = i,
-    R2 = caret::R2(pred_test, testSET2$CATs),
-    RMSE = RMSE(pred_test, testSET2$CATs)
-  ))
 }
 
-# Summarize repeated CV-like results
+# Summarize results
 cv_summary <- cv_results %>%
-  group_by(Dataset) %>%
   summarise(
     Mean_R2 = mean(R2),
     SD_R2 = sd(R2),
@@ -629,6 +611,7 @@ cv_summary <- cv_results %>%
   )
 
 print(cv_summary)
+
 #######################################################################
 ####(ii) bootstrapping 100 times
 set.seed(123)
