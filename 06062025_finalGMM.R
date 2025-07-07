@@ -568,46 +568,94 @@ valid <- data.frame(validation1, CATs = validationData_pheno)  # Add CATs to the
 #assign CATs to the pTau/Abeta levels of SET2
 testSET2<-data.frame(testSET2,CATs=SET2_pheno$pTAU.ABETA)
 
-#########(i)- 10 fold repeated-CV 
+#########(i)- 10 fold 5 repeated-CV 
 
-set.seed(123)
-folds <- createFolds(train$CATs, k = 10)
+set.seed(123)      # reproducible
+
+# --------------------------------------------------
+# (1) build 5 repeats × 10 folds = 50 resamples
+# --------------------------------------------------
+fold_list <- createMultiFolds(y = train$CATs, k = 10, times = 5)
 
 cv_results <- data.frame(
-  Fold = numeric(),
-  R2 = numeric(),
-  RMSE = numeric(),
+  Dataset   = character(),
+  Repeat    = numeric(),
+  Fold      = numeric(),
+  R2        = numeric(),
+  RMSE      = numeric(),
   stringsAsFactors = FALSE
 )
 
-for (i in 1:10) {
-  # Get training and validation indices
-  valid_idx <- folds[[i]]
-  train_cv <- train[-valid_idx, ]
-  valid_cv <- train[valid_idx, ]
+as_rep_fold <- function(nm) {
+  parts <- strsplit(nm, "[.]")[[1]]
+  c(
+    Fold   = as.integer(sub("Fold", "", parts[1])),
+    Repeat = as.integer(sub("Rep",  "", parts[2]))
+  )
+}
+
+# --------------------------------------------------
+# (2) loop through every resample
+# --------------------------------------------------
+for (nm in names(fold_list)) {
   
-  # Fit GMM on training fold
-  gmm_model <- Mclust(train_cv$CATs, G = 5)
-  component_means <- gmm_model$parameters$mean
+  ids            <- as_rep_fold(nm)
+  train_idx      <- fold_list[[nm]]
+  valid_idx      <- setdiff(seq_len(nrow(train)), train_idx)
   
-  # Predict on validation fold
-  pred_valid <- predict(gmm_model, newdata = valid_cv$CATs)$z %*% component_means
+  train_cv       <- train[ train_idx, ]
+  valid_cv       <- train[ valid_idx, ]
   
-  # Save R2 and RMSE for validation
+  # ---- fit model on the training fold ----
+  gmm_model      <- Mclust(train_cv$CATs, G = 5)
+  comp_means     <- gmm_model$parameters$mean
+  
+  # ---- predict & store ----
+  # TRAIN fold performance
+  pred_train_cv  <- predict(gmm_model, newdata = train_cv$CATs)$z %*% comp_means
   cv_results <- rbind(cv_results, data.frame(
-    Fold = i,
-    R2 = caret::R2(pred_valid, valid_cv$CATs),
-    RMSE = RMSE(pred_valid, valid_cv$CATs)
+    Dataset = "Train", Repeat = ids["Repeat"], Fold = ids["Fold"],
+    R2 = caret::R2(pred_train_cv, train_cv$CATs),
+    RMSE = RMSE(pred_train_cv,  train_cv$CATs)
+  ))
+  
+  cv_summary <- cv_results |>
+    group_by(Dataset) |>
+    summarise(
+      Mean_R2   = mean(R2),
+      SD_R2     = sd(R2),
+      Mean_RMSE = mean(RMSE),
+      SD_RMSE   = sd(RMSE),
+      .groups   = "drop"
+    )
+  
+  print(cv_summary)
+  # VALID fold performance
+  pred_valid_cv  <- predict(gmm_model, newdata = valid_cv$CATs)$z %*% comp_means
+  cv_results <- rbind(cv_results, data.frame(
+    Dataset = "Validation", Repeat = ids["Repeat"], Fold = ids["Fold"],
+    R2 = caret::R2(pred_valid_cv, valid_cv$CATs),
+    RMSE = RMSE(pred_valid_cv,  valid_cv$CATs)
+  ))
+  
+  # fixed external test set (SET2)
+  pred_test_cv   <- predict(gmm_model, newdata = testSET2$CATs)$z %*% comp_means
+  cv_results <- rbind(cv_results, data.frame(
+    Dataset = "SET2", Repeat = ids["Repeat"], Fold = ids["Fold"],
+    R2 = caret::R2(pred_test_cv, testSET2$CATs),
+    RMSE = RMSE(pred_test_cv,  testSET2$CATs)
   ))
 }
 
-# Summarize results
-cv_summary <- cv_results %>%
+#####summary cv by datasets
+cv_summary <- cv_results |>
+  group_by(Dataset) |>
   summarise(
-    Mean_R2 = mean(R2),
-    SD_R2 = sd(R2),
+    Mean_R2   = mean(R2),
+    SD_R2     = sd(R2),
     Mean_RMSE = mean(RMSE),
-    SD_RMSE = sd(RMSE)
+    SD_RMSE   = sd(RMSE),
+    .groups   = "drop"
   )
 
 print(cv_summary)
